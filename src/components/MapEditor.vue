@@ -1,7 +1,6 @@
 <script setup>
 import {
   computed,
-  defineExpose,
   onBeforeUnmount,
   onMounted,
   ref,

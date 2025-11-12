@@ -1,52 +1,103 @@
 ## 快速概览 — 目标与边界
 
-这是一个用于连接 ROS（通过 rosbridge）并在浏览器中可视化与编辑地图/相机/导航数据的前端仪表盘。前端基于 Vue 3 + Vite，3D 可视化用 Three.js，ROS 通信使用 `roslib`。后端并不在仓库中：开发时 Vite 提供一个本地 middleware（见 `vite.config.js`）来暴露地图文件的 HTTP 接口。
+ROS 仪表盘：Vue 3 + Vite 前端，连接 rosbridge WebSocket，可视化导航、摄像头、点云数据，实时编辑 PGM 地图。三大视图面板可切换，右侧预设按钮快速发布 ROS 消息。后端非同仓库，Vite dev 提供地图文件 HTTP API（`/api/maps`）。
 
-## 关键启动 / 调试 命令（项目特定）
+## 关键启动 / 调试 命令
 
-- 安装依赖：
-  - Windows (cmd.exe):
-    set PGM_DIR=D:\maps
-    npm install
-    npm run dev
-  - 默认 dev 地址： http://localhost:5173
-- 必须先在 ROS 端启动 rosbridge_server（默认 WebSocket 9090）：
-  roslaunch rosbridge_server rosbridge_websocket.launch
+```bash
+# Windows cmd.exe
+set PGM_DIR=D:\maps
+npm install
+npm run dev
+# 访问 http://localhost:5173
+```
 
-如果需要改变本地地图目录，设置环境变量 `PGM_DIR`（Vite 中会解析）。在 cmd.exe 中先用 `set PGM_DIR=...` 再运行 `npm run dev`。
+**必备**：ROS 端需启动 rosbridge_server（WebSocket 9090）
+```bash
+roslaunch rosbridge_server rosbridge_websocket.launch
+```
 
-## 重要文件与意图（修改/调试时优先查看）
+**自定义地图目录**：通过 `PGM_DIR` 环境变量改变地图路径（Vite 会解析）。
 
-- `src/App.vue` — 应用入口、rosbridge 连接逻辑、面板切换与快速发布按钮的配置（publisher presets、默认 ws url）。修改默认 WS 地址或新增面板首选在此处进行。
-- `src/components/View3D.vue` — Three.js 场景与 ROS 订阅（/path, /map, /points），使用 `ROSLIB.TFClient`、`nav_msgs/Path`、`nav_msgs/OccupancyGrid` 与 `sensor_msgs/PointCloud2`。主要交互、相机控制均在此文件实现。
-- `src/components/CameraViewer.vue` — 订阅 `sensor_msgs/Image`，支持 jpeg/png 和 rgb8/bgr8 解码成 data URL。注意大图像的 base64/Canvas 解码可能造成内存压力。
-- `src/components/MapEditor.vue` — PGM（P5/P2）解析/编辑/生成与上传（使用 `/api/maps` via vite middleware），并通过 rosbridge 发布 Base64 PGM 到 `/map_editor/pgm_data`。PGM 读写逻辑（parse/build）在本文件，修改 PGM 行为时请在此处调整。
-- `vite.config.js` — 包含一个 dev-server middleware：暴露 `GET /api/maps`, `GET /api/maps/{name}`, `PUT /api/maps/{name}`，以及基于 `PGM_DIR` 的目录解析。任何与地图文件 I/O 有关的变更通常要同步此文件。
-- `maps/` — 默认的地图文件目录（可由 `PGM_DIR` 覆盖）。
+## 重要文件与组件架构
 
-## 项目约定与常见模式（供 AI 参考）
+### 核心连接与主应用
+- **`src/App.vue`**（~1000 行）
+  - 单一 ROSLIB.Ros 对象（全局）创建于 `connect()` 方法，通过 props 传递给子组件
+  - 三个面板：navigation / camera / map-editor，通过 `activePanel` 切换
+  - 预设发布器（`publisherPresets`）按面板分类，统一使用 `std_msgs/Empty`，发布后 400ms 清除发布状态
+  - 订阅列表（`panelTopics`）仅用于 UI 展示，实际订阅在各组件内部完成
+  - 连接状态机：disconnected → connecting → connected/error，错误时保留 `statusDetail` 信息
 
-- ROS 连接模型：一处创建 `ROSLIB.Ros` 对象（`src/App.vue`），组件通过 props 接收 `ros` 与 `connected`，并在内部创建/销毁 `ROSLIB.Topic` 或 `ROSLIB.TFClient`。遵循 subscribe/ unsubscribe 的生命周期（onMounted/onBeforeUnmount / watch connected）。
-- 快捷发布（publisher presets）：一律使用 `std_msgs/Empty` 作为默认快速命令类型（见 `src/App.vue` 的 publisherPresets）。新增预设时保留同样的数据形态与短超时 UI 行为。
-- MapEditor 使用 P5/P2 文本或二进制 PGM 格式读取，并将像素数据保存在 Uint8Array/Uint8ClampedArray 中；生成上传时以 `application/octet-stream` PUT 到 `/api/maps/{name}`。不要在 middleware 里假定额外元数据。
+### 数据流与订阅模式
+- **`src/components/View3D.vue`**（~330 行）
+  - Three.js 场景初始化与鼠标控制（左键旋转、右键平移、滚轮缩放）
+  - 内部创建三个 ROSLIB.Topic 订阅：`/path`（nav_msgs/Path）、`/map`（nav_msgs/OccupancyGrid）、`/points`（sensor_msgs/PointCloud2）
+  - 使用 ROSLIB.TFClient 处理坐标变换
+  - 关键：onMounted 时初始化，onBeforeUnmount / watch connected 时 unsubscribe 和 dispose Three.js 资源
+  - 点云与路径数据存入 `paths` 和 `pointClouds` ref，实时渲染
+
+- **`src/components/CameraViewer.vue`**（~160 行）
+  - 订阅单一话题（默认 `/camera/image_raw`，可通过 `topicName` prop 改）
+  - 解码支持：JPEG/PNG（base64）和 RGB8/BGR8（Canvas）
+  - 注意：大图像的 base64 编码与 Canvas 操作可能造成内存压力
+
+- **`src/components/MapEditor.vue`**（~1070 行）
+  - 本地 canvas 绘图（支持自由绘制/障碍/未知三种工具）
+  - HTTP API：`GET /api/maps` 获取列表、`GET /api/maps/{name}` 下载、`PUT /api/maps/{name}` 上传
+  - PGM 格式：支持 P5（二进制）和 P2（文本），解析与生成核心逻辑在 `parsePgmBuffer` 和 `buildPgmBuffer`
+  - 发布 Base64 PGM 到 `/map_editor/pgm_data`（std_msgs/String）格式：`{ name, encoding: 'base64', data }`
+
+### Vite 配置与后端 API
+- **`vite.config.js`**
+  - `registerMapsApi()` 中间件：处理 `/api/maps` 路由
+  - 地图目录由 `PGM_DIR` 环境变量或默认 `./maps` 决定（`resolveMapsDir()` 解析）
+  - 接口：GET 返回 JSON 文件列表（含大小、修改时间），PUT/POST 保存二进制数据
+  - 文件名通过 `sanitizeName()` 防护，仅接受 `.pgm` 扩展名
+
+## 项目约定与常见模式
+
+### ROS 连接生命周期
+1. App.vue 中的 `connect()` 创建全局 `ROSLIB.Ros({ url })`，注册 `on('connection')` / `on('close')` / `on('error')` 回调
+2. 子组件通过 `watch(connected)` 或 `onMounted` 分别创建 ROSLIB.Topic 订阅；通过 props 接收 `ros` 对象和 `connected` 布尔值
+3. **关键**：onBeforeUnmount 或 disconnected 时必须 unsubscribe 话题，View3D 还需 dispose Three.js 资源（材质、几何体、渲染器）
+
+### 消息发布与预设按钮
+- `publisherPresets` 按 panelId 分类，每个预设含 `label`、`topic`、`type`、`hint`
+- 发布时创建短期 Topic → 新建 Message → publish，然后 setTimeout 400ms 清除 UI 状态
+- 错误处理：catch 时更新全局 `status` 和 `statusDetail`，UI 显示错误提示
+
+### 画布与地图编辑
+- MapEditor 内部维护 canvas 绘图状态：`mode`（pointer/brush）、`tool`（free/occupied/unknown）
+- 像素数据存储在 Uint8Array（或 Uint8ClampedArray），三值映射：free=255, occupied=0, unknown=205
+- 上传前通过 `buildPgmBuffer()` 将像素数据编码为 PGM 格式，然后 `PUT /api/maps/{name}` 发送二进制
+
+### 三值地图约定
+- **255** = 自由空间（白色）
+- **0** = 障碍物（黑色）  
+- **205** = 未知区域（灰色）
+- 其他值：ROS 栅格地图可能包含 -1（未知/闭路），但本项目对外仅暴露三值
 
 ## 集成点与外部依赖
 
-- rosbridge_server（WebSocket, 默认 9090）— 必备：前端通过 `roslib` 与其通信。
-- Three.js（渲染）、roslib（ROS 通信）、Vite（dev server + middleware）。
-- 地图文件通过 Vite middleware 暴露给前端（`vite.config.js`）。地图的默认目录为仓库的 `maps/`，生产环境需确保 Node 侧或部署平台提供相同的接口。
+- **rosbridge_server**（WebSocket, 默认 9090）：前端通过 ROSLIB 与其通信，必须先启动
+- **Three.js**：View3D 的 3D 渲染引擎，需手动管理资源生命周期
+- **roslib**：ROS 通信库，提供 Ros、Topic、TFClient 等核心类
+- **Vite middleware**：暴露 `/api/maps` HTTP 接口，地图目录由 `PGM_DIR` 或默认 `./maps` 决定
+- **生产部署**：若非 Vite 开发，需确保部署平台提供相同的 `/api/maps` 接口和 PGM 文件存储
 
 ## 代码修改建议（常见任务示例）
 
-- 更改默认 ROS topic/URL：修改 `src/App.vue` 中的 `wsUrl` 或 `panelTopics` / `publisherPresets`。
-- 增加新的 3D 订阅或渲染层：在 `src/components/View3D.vue` 添加新的 `ROSLIB.Topic` 订阅并将数据转换为 Three.js 对象；确保在组件卸载或 `connected` 变更时 unsubscribe 并 dispose 资源。
-- 支持新的 PGM 子格式或更大文件：修改 `src/components/MapEditor.vue` 的 `parsePgmBuffer` 与 `buildPgmBuffer`，并注意浏览器内存与 base64 编码成本（发送前可考虑分片或压缩）。
+- **更改默认 ROS 地址/topic**：修改 `src/App.vue` 中的 `wsUrl`（当前 `ws://192.168.13.129:9090`）、`panelTopics` 或 `publisherPresets`
+- **增加新的 3D 订阅/渲染层**：在 `src/components/View3D.vue` 添加新 `ROSLIB.Topic` 订阅，转换为 Three.js 对象，确保 unsubscribe 和 dispose 资源
+- **支持新 PGM 格式/大文件**：修改 `src/components/MapEditor.vue` 的 `parsePgmBuffer` 与 `buildPgmBuffer`，注意浏览器内存与 base64 成本
+- **新增预设按钮**：在 `src/App.vue` 的 `publisherPresets[panelId]` 数组中添加对象，含 `label` / `topic` / `type` / `hint`
 
-## 已发现的可用示例（直接引用）
+## 已发现的可用示例
 
-- 发布 PGM 到 robot: MapEditor 调用 topic `/map_editor/pgm_data` 发送 JSON `{ name, encoding: 'base64', data }`（`std_msgs/String`）。
-- 默认 Camera topic：`/camera/image_raw`（可在 `CameraViewer.vue` 的 `topicName` prop 修改）。
-- Vite maps API: `GET /api/maps` 列表、`GET /api/maps/{name}` 下载、`PUT /api/maps/{name}` 上传（参见 `vite.config.js` 中的 `registerMapsApi`）。
+- PGM 上传到机器人：MapEditor 发布到 `/map_editor/pgm_data`（`std_msgs/String`），格式 `{ name, encoding: 'base64', data }`
+- 摄像头 topic：默认 `/camera/image_raw`（`CameraViewer.vue` 中 `topicName` prop 可改）
+- Vite maps API：`GET /api/maps` 列表、`GET /api/maps/{name}` 下载、`PUT /api/maps/{name}` 上传
 
 ## 何时回退/寻求人工帮助
 
