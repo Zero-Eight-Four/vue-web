@@ -25,7 +25,7 @@ const boardRef = ref(null);
 const fileName = ref("");
 const saveAsName = ref("");
 const mapMeta = ref(null);
-const mode = ref("pointer"); // "pointer" 或 "brush"
+const mode = ref("pointer"); // "pointer" 或 "brush" 或其他工具
 const tool = ref("free");
 const brushSize = ref(8);
 const isDrawing = ref(false);
@@ -41,6 +41,8 @@ const uploading = ref(false);
 const errorMessage = ref("");
 const isDragging = ref(false);
 const dragStart = ref(null);
+const selectionStart = ref(null); // 框选开始点
+const selectionEnd = ref(null); // 框选结束点
 const isLoaded = computed(() => Boolean(mapMeta.value));
 
 const TOOL_VALUES = {
@@ -58,6 +60,9 @@ const TOOL_LABELS = {
 const MODE_LABELS = {
   pointer: "指针",
   brush: "画笔",
+  "rect-select": "框选",
+  eraser: "橡皮擦",
+  fill: "填充",
 };
 
 const parsePgmBuffer = (buffer) => {
@@ -226,6 +231,7 @@ const uploadLocalPgm = async (file) => {
     }
     scale.value = Math.min(600 / pgm.width, 600 / pgm.height, 2);
     drawPixelsToCanvas();
+    centerMapInView();
   } catch (error) {
     console.error("upload local pgm error", error);
     errorMessage.value = error.message || "上传 PGM 文件失败";
@@ -269,6 +275,11 @@ const drawPixelsToCanvas = () => {
   context.putImageData(imageData, 0, 0);
 };
 
+const centerMapInView = () => {
+  // grid layout 会自动处理居中，这里可以为空
+  // 或者用于其他需要的滚动调整
+};
+
 const fetchMapsList = async () => {
   listLoading.value = true;
   errorMessage.value = "";
@@ -309,6 +320,7 @@ const loadMapFromServer = async (name) => {
     }
     scale.value = Math.min(600 / pgm.width, 600 / pgm.height, 2);
     drawPixelsToCanvas();
+    centerMapInView();
   } catch (error) {
     console.error("load map error", error);
     errorMessage.value = error.message || "无法加载地图";
@@ -331,10 +343,12 @@ const getCanvasPoint = (event) => {
   return { x, y };
 };
 
-const drawAtPoint = (point) => {
+const drawAtPoint = (point, value = null) => {
   if (!mapMeta.value) return;
   const { width, pixels } = mapMeta.value;
   const brushRadius = Math.max(1, Math.floor(brushSize.value / 2));
+  const fillValue = value !== null ? value : TOOL_VALUES[tool.value];
+  
   for (let dy = -brushRadius; dy <= brushRadius; dy += 1) {
     for (let dx = -brushRadius; dx <= brushRadius; dx += 1) {
       const xx = point.x + dx;
@@ -342,20 +356,66 @@ const drawAtPoint = (point) => {
       if (dx * dx + dy * dy > brushRadius * brushRadius) continue;
       if (xx < 0 || yy < 0 || xx >= width || yy >= mapMeta.value.height)
         continue;
-      pixels[yy * width + xx] = TOOL_VALUES[tool.value];
+      pixels[yy * width + xx] = fillValue;
     }
   }
+  drawPixelsToCanvas();
+};
+
+const fillRect = (startPoint, endPoint, value) => {
+  if (!mapMeta.value) return;
+  const { width, height, pixels } = mapMeta.value;
+  
+  const minX = Math.max(0, Math.min(startPoint.x, endPoint.x));
+  const maxX = Math.min(width, Math.max(startPoint.x, endPoint.x));
+  const minY = Math.max(0, Math.min(startPoint.y, endPoint.y));
+  const maxY = Math.min(height, Math.max(startPoint.y, endPoint.y));
+  
+  for (let y = minY; y < maxY; y++) {
+    for (let x = minX; x < maxX; x++) {
+      pixels[y * width + x] = value;
+    }
+  }
+  drawPixelsToCanvas();
+};
+
+const floodFill = (startPoint, fillValue) => {
+  if (!mapMeta.value) return;
+  const { width, height, pixels } = mapMeta.value;
+  const startIndex = startPoint.y * width + startPoint.x;
+  const originalValue = pixels[startIndex];
+  
+  if (originalValue === fillValue) return; // 已经是目标颜色
+  
+  const stack = [startPoint];
+  const visited = new Set();
+  
+  while (stack.length > 0) {
+    const point = stack.pop();
+    const index = point.y * width + point.x;
+    
+    if (index < 0 || index >= pixels.length) continue;
+    if (visited.has(index)) continue;
+    if (pixels[index] !== originalValue) continue;
+    
+    visited.add(index);
+    pixels[index] = fillValue;
+    
+    // 添加相邻点（4邻接）
+    if (point.x > 0) stack.push({ x: point.x - 1, y: point.y });
+    if (point.x < width - 1) stack.push({ x: point.x + 1, y: point.y });
+    if (point.y > 0) stack.push({ x: point.x, y: point.y - 1 });
+    if (point.y < height - 1) stack.push({ x: point.x, y: point.y + 1 });
+  }
+  
   drawPixelsToCanvas();
 };
 
 const handleCanvasDown = (event) => {
   if (!mapMeta.value) return;
 
-  // 中键或 Ctrl+左键用于拖动地图
-  const isMiddleClick = event.button === 1;
-  const isCtrlLeftClick = event.button === 0 && event.ctrlKey;
-
-  if (isMiddleClick || isCtrlLeftClick) {
+  // 在指针模式下，左键用于拖动地图
+  if (event.button === 0 && mode.value === "pointer") {
     isDragging.value = true;
     dragStart.value = {
       x: event.clientX,
@@ -364,6 +424,48 @@ const handleCanvasDown = (event) => {
       scrollTop: boardRef.value.scrollTop,
     };
     event.preventDefault();
+    return;
+  }
+
+  // 中键用于拖动地图（所有模式）
+  const isMiddleClick = event.button === 1;
+  if (isMiddleClick) {
+    isDragging.value = true;
+    dragStart.value = {
+      x: event.clientX,
+      y: event.clientY,
+      scrollLeft: boardRef.value.scrollLeft,
+      scrollTop: boardRef.value.scrollTop,
+    };
+    event.preventDefault();
+    return;
+  }
+
+  // 框选工具
+  if (event.button === 0 && mode.value === "rect-select") {
+    const point = getCanvasPoint(event);
+    if (!point) return;
+    isDrawing.value = true;
+    selectionStart.value = point;
+    selectionEnd.value = point;
+    return;
+  }
+
+  // 橡皮擦工具
+  if (event.button === 0 && mode.value === "eraser") {
+    const point = getCanvasPoint(event);
+    if (!point) return;
+    isDrawing.value = true;
+    lastPoint.value = point;
+    drawAtPoint(point, 255); // 橡皮擦绘制自由区域
+    return;
+  }
+
+  // 填充工具
+  if (event.button === 0 && mode.value === "fill") {
+    const point = getCanvasPoint(event);
+    if (!point) return;
+    floodFill(point, TOOL_VALUES[tool.value]);
     return;
   }
 
@@ -388,7 +490,38 @@ const handleCanvasMove = (event) => {
     return;
   }
 
-  // 处理绘制
+  // 处理框选
+  if (isDrawing.value && mode.value === "rect-select" && selectionStart.value) {
+    const point = getCanvasPoint(event);
+    if (!point) return;
+    selectionEnd.value = point;
+    return;
+  }
+
+  // 处理橡皮擦
+  if (isDrawing.value && mode.value === "eraser") {
+    const point = getCanvasPoint(event);
+    if (!point) return;
+    if (!lastPoint.value) {
+      drawAtPoint(point, 255);
+      lastPoint.value = point;
+      return;
+    }
+    const dx = point.x - lastPoint.value.x;
+    const dy = point.y - lastPoint.value.y;
+    const steps = Math.max(Math.abs(dx), Math.abs(dy));
+    for (let i = 1; i <= steps; i += 1) {
+      const intermediate = {
+        x: Math.round(lastPoint.value.x + (dx * i) / steps),
+        y: Math.round(lastPoint.value.y + (dy * i) / steps),
+      };
+      drawAtPoint(intermediate, 255);
+    }
+    lastPoint.value = point;
+    return;
+  }
+
+  // 处理画笔绘制
   if (!isDrawing.value || !mapMeta.value) return;
   const point = getCanvasPoint(event);
   if (!point) return;
@@ -411,6 +544,12 @@ const handleCanvasMove = (event) => {
 };
 
 const handleCanvasUp = () => {
+  if (mode.value === "rect-select" && selectionStart.value && selectionEnd.value) {
+    fillRect(selectionStart.value, selectionEnd.value, TOOL_VALUES[tool.value]);
+    selectionStart.value = null;
+    selectionEnd.value = null;
+  }
+  
   isDrawing.value = false;
   isDragging.value = false;
   lastPoint.value = null;
@@ -446,11 +585,13 @@ const invertMap = () => {
 const zoomIn = () => {
   if (!mapMeta.value) return;
   scale.value = Math.min(scale.value * 1.2, 4);
+  centerMapInView();
 };
 
 const zoomOut = () => {
   if (!mapMeta.value) return;
   scale.value = Math.max(scale.value / 1.2, 0.5);
+  centerMapInView();
 };
 
 const resetZoom = () => {
@@ -460,6 +601,7 @@ const resetZoom = () => {
     600 / mapMeta.value.height,
     2
   );
+  centerMapInView();
 };
 
 const buildPgmBuffer = () => {
@@ -636,7 +778,11 @@ defineExpose({
             :class="{ active: mode === m }"
             @click="mode = m"
             :title="
-              m === 'pointer' ? '选择指针以查看地图' : '选择画笔以编辑地图'
+              m === 'pointer' ? '选择指针以查看地图' : 
+              m === 'brush' ? '选择画笔以编辑地图' :
+              m === 'rect-select' ? '拖拽框选区域并填充' :
+              m === 'eraser' ? '橡皮擦工具' :
+              m === 'fill' ? '点击填充连通区域' : ''
             "
           >
             {{ MODE_LABELS[m] }}
@@ -654,7 +800,7 @@ defineExpose({
             class="tool-btn"
             :class="{ active: tool === toolMode }"
             @click="tool = toolMode"
-            :disabled="mode !== 'brush'"
+            :disabled="mode !== 'brush' && mode !== 'rect-select' && mode !== 'fill'"
           >
             {{ TOOL_LABELS[toolMode] }}
           </button>
@@ -671,7 +817,7 @@ defineExpose({
           min="1"
           max="32"
           class="slider"
-          :disabled="mode !== 'brush'"
+          :disabled="mode !== 'brush' && mode !== 'eraser'"
         />
       </div>
       <div class="toolbar-group">
@@ -723,6 +869,15 @@ defineExpose({
         @click="invertMap"
       >
         反转颜色
+      </button>
+      <button
+        type="button"
+        class="action-btn secondary"
+        :disabled="!isLoaded"
+        @click="downloadPgm"
+        title="导出为 PGM 文件"
+      >
+        导出
       </button>
     </div>
 
@@ -980,13 +1135,14 @@ defineExpose({
   border-radius: 18px;
   border: 1px solid #d4def3;
   background: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   position: relative;
   overflow: auto;
   box-shadow: 0 18px 45px -32px rgba(30, 48, 96, 0.45);
   cursor: grab;
+  padding: 20px;
+  display: grid;
+  place-items: center;
+  min-height: 0;
 }
 
 .canvas-board:active {
@@ -999,6 +1155,9 @@ defineExpose({
     rgba(173, 196, 241, 0.1),
     rgba(255, 255, 255, 0.55)
   );
+  display: grid;
+  place-items: center;
+  padding: 0;
 }
 
 .board-inner {
