@@ -13,7 +13,7 @@ const props = defineProps({
   },
   topicName: {
     type: String,
-    default: '/camera/image_raw'
+    default: '/camera/image_raw/compressed'
   }
 })
 
@@ -23,17 +23,30 @@ let imageListener = null
 
 const decodeImage = (message) => {
   try {
-    if (message.format === 'jpeg' || message.format === 'jpg') {
-      const base64 = btoa(
-        String.fromCharCode.apply(null, new Uint8Array(message.data))
-      )
-      return `data:image/jpeg;base64,${base64}`
-    } else if (message.format === 'png') {
-      const base64 = btoa(
-        String.fromCharCode.apply(null, new Uint8Array(message.data))
-      )
-      return `data:image/png;base64,${base64}`
-    } else if (message.encoding === 'rgb8' || message.encoding === 'bgr8') {
+    // 处理 CompressedImage 消息
+    if (message.data && message.format) {
+      // CompressedImage 的 data 是 Uint8Array，format 是 jpeg 或 png
+      const data = message.data
+      let binaryString = ''
+      
+      // 将 Uint8Array 转换为二进制字符串
+      for (let i = 0; i < data.length; i++) {
+        binaryString += String.fromCharCode(data[i])
+      }
+      
+      // 转换为 base64
+      const base64 = btoa(binaryString)
+      
+      // 根据格式设置正确的 MIME 类型
+      if (message.format === 'jpeg' || message.format === 'jpg') {
+        return `data:image/jpeg;base64,${base64}`
+      } else if (message.format === 'png') {
+        return `data:image/png;base64,${base64}`
+      }
+    }
+    
+    // 处理 Image 消息（非压缩）
+    if (message.encoding === 'rgb8' || message.encoding === 'bgr8') {
       const canvas = document.createElement('canvas')
       canvas.width = message.width
       canvas.height = message.height
@@ -44,15 +57,15 @@ const decodeImage = (message) => {
       for (let i = 0; i < message.width * message.height; i++) {
         const offset = i * 3
         if (message.encoding === 'rgb8') {
-          imageData.data[offset] = data[offset]
-          imageData.data[offset + 1] = data[offset + 1]
-          imageData.data[offset + 2] = data[offset + 2]
+          imageData.data[i * 4] = data[offset]
+          imageData.data[i * 4 + 1] = data[offset + 1]
+          imageData.data[i * 4 + 2] = data[offset + 2]
         } else {
-          imageData.data[offset] = data[offset + 2]
-          imageData.data[offset + 1] = data[offset + 1]
-          imageData.data[offset + 2] = data[offset]
+          imageData.data[i * 4] = data[offset + 2]
+          imageData.data[i * 4 + 1] = data[offset + 1]
+          imageData.data[i * 4 + 2] = data[offset]
         }
-        imageData.data[offset + 3] = 255
+        imageData.data[i * 4 + 3] = 255
       }
 
       ctx.putImageData(imageData, 0, 0)
@@ -70,7 +83,7 @@ const subscribeToImage = () => {
   imageListener = new ROSLIB.Topic({
     ros: props.ros,
     name: props.topicName,
-    messageType: 'sensor_msgs/Image',
+    messageType: 'sensor_msgs/CompressedImage',
     throttle_rate: 30
   })
 

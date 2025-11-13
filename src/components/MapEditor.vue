@@ -62,7 +62,6 @@ const MODE_LABELS = {
   brush: "画笔",
   "rect-select": "框选",
   eraser: "橡皮擦",
-  fill: "填充",
 };
 
 const parsePgmBuffer = (buffer) => {
@@ -379,38 +378,6 @@ const fillRect = (startPoint, endPoint, value) => {
   drawPixelsToCanvas();
 };
 
-const floodFill = (startPoint, fillValue) => {
-  if (!mapMeta.value) return;
-  const { width, height, pixels } = mapMeta.value;
-  const startIndex = startPoint.y * width + startPoint.x;
-  const originalValue = pixels[startIndex];
-  
-  if (originalValue === fillValue) return; // 已经是目标颜色
-  
-  const stack = [startPoint];
-  const visited = new Set();
-  
-  while (stack.length > 0) {
-    const point = stack.pop();
-    const index = point.y * width + point.x;
-    
-    if (index < 0 || index >= pixels.length) continue;
-    if (visited.has(index)) continue;
-    if (pixels[index] !== originalValue) continue;
-    
-    visited.add(index);
-    pixels[index] = fillValue;
-    
-    // 添加相邻点（4邻接）
-    if (point.x > 0) stack.push({ x: point.x - 1, y: point.y });
-    if (point.x < width - 1) stack.push({ x: point.x + 1, y: point.y });
-    if (point.y > 0) stack.push({ x: point.x, y: point.y - 1 });
-    if (point.y < height - 1) stack.push({ x: point.x, y: point.y + 1 });
-  }
-  
-  drawPixelsToCanvas();
-};
-
 const handleCanvasDown = (event) => {
   if (!mapMeta.value) return;
 
@@ -458,14 +425,6 @@ const handleCanvasDown = (event) => {
     isDrawing.value = true;
     lastPoint.value = point;
     drawAtPoint(point, 255); // 橡皮擦绘制自由区域
-    return;
-  }
-
-  // 填充工具
-  if (event.button === 0 && mode.value === "fill") {
-    const point = getCanvasPoint(event);
-    if (!point) return;
-    floodFill(point, TOOL_VALUES[tool.value]);
     return;
   }
 
@@ -781,8 +740,7 @@ defineExpose({
               m === 'pointer' ? '选择指针以查看地图' : 
               m === 'brush' ? '选择画笔以编辑地图' :
               m === 'rect-select' ? '拖拽框选区域并填充' :
-              m === 'eraser' ? '橡皮擦工具' :
-              m === 'fill' ? '点击填充连通区域' : ''
+              m === 'eraser' ? '橡皮擦工具' : ''
             "
           >
             {{ MODE_LABELS[m] }}
@@ -800,7 +758,7 @@ defineExpose({
             class="tool-btn"
             :class="{ active: tool === toolMode }"
             @click="tool = toolMode"
-            :disabled="mode !== 'brush' && mode !== 'rect-select' && mode !== 'fill'"
+            :disabled="mode !== 'brush' && mode !== 'rect-select'"
           >
             {{ TOOL_LABELS[toolMode] }}
           </button>
@@ -1231,5 +1189,15 @@ canvas {
 /* 画笔模式时显示绘制光标 */
 .map-editor.brush-mode canvas {
   cursor: crosshair;
+}
+
+/* 框选模式时显示十字光标 */
+.map-editor.rect-select-mode canvas {
+  cursor: crosshair;
+}
+
+/* 橡皮擦模式时显示自定义光标 */
+.map-editor.eraser-mode canvas {
+  cursor: cell;
 }
 </style>

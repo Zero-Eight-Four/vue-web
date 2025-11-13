@@ -5,7 +5,7 @@ import View3D from "./components/View3D.vue";
 import CameraViewer from "./components/CameraViewer.vue";
 import MapEditor from "./components/MapEditor.vue";
 
-const wsUrl = ref("ws://192.168.13.129:9090");
+const wsUrl = ref("ws://192.168.1.103:9090");
 const status = ref("disconnected");
 const statusDetail = ref("");
 const activePanel = ref("navigation");
@@ -113,8 +113,8 @@ const panelTopics = {
   ],
   camera: [
     {
-      topic: "/camera/image_raw",
-      description: "摄像头图像 (sensor_msgs/Image)",
+      topic: "/camera/image_raw/compressed",
+      description: "摄像头图像 (sensor_msgs/CompressedImage)",
     },
   ],
   "map-editor": [
@@ -320,7 +320,7 @@ onBeforeUnmount(() => {
             v-else-if="activePanel === 'camera'"
             :ros="ros"
             :connected="isConnected"
-            topic-name="/camera/image_raw"
+            topic-name="/camera/image_raw/compressed"
           />
           <MapEditor
             ref="mapEditorRef"
