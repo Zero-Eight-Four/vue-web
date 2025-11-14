@@ -5,13 +5,14 @@ import View3D from "./components/View3D.vue";
 import CameraViewer from "./components/CameraViewer.vue";
 import MapEditor from "./components/MapEditor.vue";
 
-const wsUrl = ref("ws://192.168.1.103:9090");
+const wsUrl = ref("ws://192.168.0.169:9090");
 const status = ref("disconnected");
 const statusDetail = ref("");
 const activePanel = ref("navigation");
 const publishStates = ref({});
 const topicsCollapsed = ref(true);
 const mapEditorRef = ref(null);
+const cameraTopicName = ref("/camera/image_raw");
 let ros = null;
 
 const isConnecting = computed(() => status.value === "connecting");
@@ -153,6 +154,43 @@ const getPresetKey = (preset) => `${preset.topic}|${preset.type}`;
 const isPresetPublishing = (preset) =>
   Boolean(publishStates.value[getPresetKey(preset)]);
 
+const testConnection = () => {
+  const url = wsUrl.value.trim();
+  if (!url) {
+    console.error("❌ WebSocket 地址为空");
+    return;
+  }
+
+  console.log(`🧪 开始测试 WebSocket 连接: ${url}`);
+  statusDetail.value = `正在测试连接到 ${url}...`;
+
+  const socket = new WebSocket(url);
+
+  const timeout = setTimeout(() => {
+    console.error(`❌ 连接超时 (10秒): ${url}`);
+    statusDetail.value = `连接超时 - 无法在 10 秒内连接到 ${url}`;
+    socket.close();
+  }, 10000);
+
+  socket.onopen = () => {
+    clearTimeout(timeout);
+    console.log(`✅ WebSocket 连接成功！`);
+    statusDetail.value = `✅ 连接测试成功 - WebSocket 可达！`;
+    socket.close();
+  };
+
+  socket.onerror = (event) => {
+    clearTimeout(timeout);
+    console.error(`❌ WebSocket 连接出错:`, event);
+    statusDetail.value = `❌ 连接失败 - 检查 IP 和端口是否正确`;
+  };
+
+  socket.onclose = () => {
+    clearTimeout(timeout);
+    console.log(`🔌 WebSocket 已关闭`);
+  };
+};
+
 const connect = () => {
   if (isConnecting.value || isConnected.value) return;
   const url = wsUrl.value.trim();
@@ -167,22 +205,26 @@ const connect = () => {
     ros.on("connection", () => {
       status.value = "connected";
       statusDetail.value = "";
+      console.log(`✅ ROS 连接成功！`);
     });
 
     ros.on("close", () => {
       status.value = "disconnected";
       statusDetail.value = "连接已关闭";
       ros = null;
+      console.log(`🔌 ROS 连接已关闭`);
     });
 
     ros.on("error", (error) => {
       status.value = "error";
       statusDetail.value = error?.message || "连接失败";
+      console.error(`❌ ROS 连接出错:`, error);
     });
   } catch (error) {
     status.value = "error";
     statusDetail.value = error?.message || "无法创建连接";
     ros = null;
+    console.error(`❌ 创建 ROS 连接时出错:`, error);
   }
 };
 
@@ -205,6 +247,140 @@ const disconnect = () => {
       statusDetail.value = "";
     }
   }
+};
+
+const getTopicType = (topicName) => {
+  if (!ros) {
+    console.error("❌ ROS 未连接");
+    return;
+  }
+
+  console.log(`🔍 查询话题类型: ${topicName}`);
+  statusDetail.value = `正在查询话题 ${topicName} 的类型...`;
+
+  ros.getTopicType(topicName, (type) => {
+    console.log(`✅ 话题 ${topicName} 的消息类型: ${type}`);
+    statusDetail.value = `✅ 话题 "${topicName}" 的消息类型是: ${type}`;
+  });
+};
+
+const trySubscribeWithDifferentTypes = (topicName) => {
+  if (!ros || !isConnected.value) {
+    console.error("❌ ROS 未连接");
+    statusDetail.value = "❌ ROS 未连接";
+    return;
+  }
+
+  const messageTypes = [
+    'sensor_msgs/CompressedImage',
+    'sensor_msgs/Image',
+    'std_msgs/String'
+  ];
+
+  console.log(`🧪 尝试使用不同的消息类型订阅 ${topicName}...`);
+  statusDetail.value = `正在尝试不同的消息类型订阅 ${topicName}...`;
+
+  let attempts = 0;
+
+  const tryNext = () => {
+    if (attempts >= messageTypes.length) {
+      console.error("❌ 所有消息类型都失败了");
+      statusDetail.value = "❌ 无法订阅话题 - 所有消息类型都失败了。请检查摄像头是否在发布消息。";
+      return;
+    }
+
+    const messageType = messageTypes[attempts];
+    console.log(`  尝试 ${attempts + 1}/${messageTypes.length}: ${messageType}`);
+
+    const topic = new ROSLIB.Topic({
+      ros: ros,
+      name: topicName,
+      messageType: messageType
+      // 移除 throttle_rate，确保接收所有消息
+    });
+
+    // 设置超时
+    const timeout = setTimeout(() => {
+      console.log(`  ⏱️ 超时 (3秒)，尝试下一个类型...`);
+      attempts++;
+      tryNext();
+    }, 3000);
+
+    let receivedMessage = false;
+
+    const handler = (message) => {
+      if (!receivedMessage) {
+        receivedMessage = true;
+        clearTimeout(timeout);
+        console.log(`✅ 成功! 消息类型 ${messageType} 有效！`);
+        console.log(`📨 收到消息:`, message);
+        statusDetail.value = `✅ 成功订阅! 消息类型: ${messageType}`;
+        
+        // 更新摄像头组件的消息类型
+        cameraTopicName.value = topicName;
+        
+        topic.unsubscribe();
+      }
+    };
+
+    topic.subscribe(handler);
+  };
+
+  tryNext();
+};
+
+const getAvailableTopics = () => {
+  if (!ros || !isConnected.value) {
+    console.error("❌ ROS 未连接");
+    statusDetail.value = "❌ 需要先连接到 ROS";
+    return;
+  }
+
+  console.log("🔍 查询可用话题...");
+  statusDetail.value = "正在查询可用话题...";
+
+  ros.getTopics((result) => {
+    // getTopics 返回的是对象，包含 topics 和 types 属性
+    console.log("📨 原始返回值:", result);
+    
+    let topicsList = [];
+    let topicTypes = {};
+
+    if (result && typeof result === 'object') {
+      if (Array.isArray(result.topics)) {
+        topicsList = result.topics;
+        topicTypes = result.types || {};
+      } else if (Array.isArray(result)) {
+        topicsList = result;
+      } else {
+        console.warn("⚠️ 未预期的返回格式:", result);
+        statusDetail.value = "⚠️ 获取话题失败，未知的返回格式";
+        return;
+      }
+    }
+
+    console.log("📋 可用话题列表 (共 " + topicsList.length + " 个):");
+    const imageTopics = [];
+    
+    topicsList.forEach((topic) => {
+      const type = topicTypes[topic] || "unknown";
+      console.log(`  - ${topic} [${type}]`);
+      if (topic.includes("camera") || topic.includes("image")) {
+        imageTopics.push({ name: topic, type: type });
+      }
+    });
+
+    if (imageTopics.length > 0) {
+      console.log("🎥 与摄像头相关的话题:");
+      imageTopics.forEach((item) => console.log(`  ✓ ${item.name} [${item.type}]`));
+      statusDetail.value = `✅ 找到 ${imageTopics.length} 个图像相关话题。请在浏览器控制台查看完整列表。`;
+    } else {
+      console.warn("⚠️ 未找到与摄像头相关的话题");
+      statusDetail.value = "⚠️ 未找到图像话题。请在浏览器控制台查看完整话题列表。";
+    }
+
+    console.log("💡 要使用特定话题，修改 CameraViewer 组件的 topicName prop");
+  });
 };
 
 const handleSubmit = (event) => {
@@ -273,6 +449,15 @@ onBeforeUnmount(() => {
           autocomplete="off"
         />
         <button
+          type="button"
+          class="btn btn-test"
+          :disabled="!wsUrl.trim()"
+          @click="testConnection"
+          title="测试 WebSocket 连接（不建立实际连接）"
+        >
+          🧪 测试
+        </button>
+        <button
           type="submit"
           class="btn btn-primary"
           :disabled="!wsUrl.trim() || isConnecting || isConnected"
@@ -286,6 +471,33 @@ onBeforeUnmount(() => {
           @click="disconnect"
         >
           断开
+        </button>
+        <button
+          type="button"
+          class="btn btn-secondary"
+          :disabled="!isConnected"
+          @click="getAvailableTopics"
+          title="查询 ROS 系统中所有可用话题"
+        >
+          📋 查询话题
+        </button>
+        <button
+          type="button"
+          class="btn btn-secondary"
+          :disabled="!isConnected"
+          @click="() => getTopicType('/camera/image_raw/compressed')"
+          title="查询摄像头话题的消息类型"
+        >
+          📷 查询摄像头
+        </button>
+        <button
+          type="button"
+          class="btn btn-test"
+          :disabled="!isConnected"
+          @click="() => trySubscribeWithDifferentTypes('/camera/image_raw/compressed')"
+          title="尝试不同的消息类型自动订阅"
+        >
+          🔄 尝试订阅
         </button>
       </form>
     </header>
@@ -320,7 +532,7 @@ onBeforeUnmount(() => {
             v-else-if="activePanel === 'camera'"
             :ros="ros"
             :connected="isConnected"
-            topic-name="/camera/image_raw/compressed"
+            :topic-name="cameraTopicName"
           />
           <MapEditor
             ref="mapEditorRef"
@@ -634,6 +846,18 @@ onBeforeUnmount(() => {
 .btn-secondary:hover:not(:disabled) {
   border-color: #97abc8;
   background: #f3f7ff;
+}
+
+.btn-test {
+  background: rgba(255, 193, 71, 0.15);
+  color: #c06a00;
+  border: 1px solid rgba(255, 193, 71, 0.35);
+  box-shadow: 0 3px 8px -6px rgba(192, 106, 0, 0.25);
+}
+
+.btn-test:hover:not(:disabled) {
+  background: rgba(255, 193, 71, 0.25);
+  border-color: rgba(255, 193, 71, 0.5);
 }
 
 .status-message {
