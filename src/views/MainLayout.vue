@@ -3,7 +3,7 @@
         <!-- Top Bar -->
         <div class="top-bar">
             <ConnectionStatus />
-            <div class="title">ROS Visualization</div>
+            <div class="title">机器狗控制平台</div>
             <TopicSelector />
         </div>
 

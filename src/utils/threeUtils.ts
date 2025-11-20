@@ -5,6 +5,28 @@
 import * as THREE from 'three'
 
 /**
+ * 点类型定义
+ */
+export interface Point {
+  x: number
+  y: number
+  z: number
+}
+
+/**
+ * 姿态类型定义
+ */
+export interface Pose {
+  position: Point
+  orientation: {
+    x: number
+    y: number
+    z: number
+    w: number
+  }
+}
+
+/**
  * 创建网格辅助
  */
 export function createGrid(size = 10, divisions = 10): THREE.GridHelper {
@@ -194,4 +216,152 @@ export function fitCameraToScene(
     controls.target.copy(center)
     controls.update()
   }
+}
+
+/**
+ * 从OccupancyGrid消息创建地图平面
+ */
+export function createMapPlane(mapData: {
+  info: {
+    width: number
+    height: number
+    resolution: number
+    origin: {
+      position: { x: number; y: number; z: number }
+      orientation: { x: number; y: number; z: number; w: number }
+    }
+  }
+  data: number[]
+}): THREE.Mesh {
+  const { width, height, resolution, origin } = mapData.info
+
+  // 创建画布来绘制地图
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')!
+
+  const imageData = ctx.createImageData(width, height)
+
+  // 将OccupancyGrid数据转换为图像（需要翻转Y轴，因为ROS地图原点在左下角，canvas原点在左上角）
+  for (let i = 0; i < mapData.data.length; i++) {
+    const value = mapData.data[i]
+    let color = 128 // 未知区域为灰色
+
+    if (value === -1) {
+      color = 128 // 未知
+    } else if (value === 0) {
+      color = 255 // 空闲区域为白色
+    } else if (value === 100) {
+      color = 0 // 占用区域为黑色
+    } else {
+      // 概率值转换为灰度
+      color = Math.floor(255 - (value / 100) * 255)
+    }
+
+    // 翻转Y轴：ROS地图是从下到上，canvas是从上到下
+    const x = i % width
+    const y = Math.floor(i / width)
+    const flippedY = height - 1 - y
+    const idx = (flippedY * width + x) * 4
+
+    imageData.data[idx] = color
+    imageData.data[idx + 1] = color
+    imageData.data[idx + 2] = color
+    imageData.data[idx + 3] = 255
+  }
+
+  ctx.putImageData(imageData, 0, 0)
+
+  // 创建纹理
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.minFilter = THREE.LinearFilter
+  texture.magFilter = THREE.NearestFilter
+
+  // 创建平面几何体
+  const geometry = new THREE.PlaneGeometry(width * resolution, height * resolution)
+
+  // 创建材质
+  const material = new THREE.MeshBasicMaterial({
+    map: texture,
+    side: THREE.DoubleSide,
+    transparent: false
+  })
+
+  const mesh = new THREE.Mesh(geometry, material)
+
+  // 设置位置 (XY平面,Z轴向上)
+  mesh.position.set(
+    origin.position.x + (width * resolution) / 2,
+    origin.position.y + (height * resolution) / 2,
+    0.01 // 稍微抬高避免z-fighting
+  )
+
+  // 不需要旋转,保持在XY平面
+  // mesh.rotation.x = -Math.PI / 2
+
+  return mesh
+}
+
+/**
+ * 更新地图平面
+ */
+export function updateMapPlane(
+  mesh: THREE.Mesh,
+  mapData: {
+    info: {
+      width: number
+      height: number
+      resolution: number
+    }
+    data: number[]
+  }
+): void {
+  const { width, height } = mapData.info
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')!
+
+  const imageData = ctx.createImageData(width, height)
+
+  for (let i = 0; i < mapData.data.length; i++) {
+    const value = mapData.data[i]
+    let color = 128
+
+    if (value === -1) {
+      color = 128
+    } else if (value === 0) {
+      color = 255
+    } else if (value === 100) {
+      color = 0
+    } else {
+      color = Math.floor(255 - (value / 100) * 255)
+    }
+
+    // 翻转Y轴：ROS地图是从下到上，canvas是从上到下
+    const x = i % width
+    const y = Math.floor(i / width)
+    const flippedY = height - 1 - y
+    const idx = (flippedY * width + x) * 4
+
+    imageData.data[idx] = color
+    imageData.data[idx + 1] = color
+    imageData.data[idx + 2] = color
+    imageData.data[idx + 3] = 255
+  }
+
+  ctx.putImageData(imageData, 0, 0)
+
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.minFilter = THREE.LinearFilter
+  texture.magFilter = THREE.NearestFilter
+
+  const material = mesh.material as THREE.MeshBasicMaterial
+  if (material.map) {
+    material.map.dispose()
+  }
+  material.map = texture
+  material.needsUpdate = true
 }

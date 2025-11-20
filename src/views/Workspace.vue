@@ -2,139 +2,225 @@
     <div class="workspace">
         <!-- Top App Bar -->
         <div class="app-bar">
-            <div class="app-title">ROS Visualization</div>
-            <div class="app-bar-actions">
-                <el-button v-if="!isConnected" type="primary" size="small" @click="showConnectionDialog = true">
-                    连接
-                </el-button>
-                <div v-else class="connection-status">
-                    <span class="status-dot connected"></span>
-                    <span>已连接</span>
-                    <el-button size="small" @click="handleDisconnect">断开</el-button>
-                </div>
-            </div>
+            <div class="app-title">机器狗控制平台</div>
         </div>
 
-        <!-- Main Content -->
+        <!-- Main Content - New Layout -->
         <div class="workspace-content">
-            <!-- Left Sidebar -->
-            <div class="sidebar sidebar-left">
-                <div v-for="panel in panels" :key="panel.id" class="sidebar-item"
-                    :class="{ active: currentPanel === panel.id }" @click="currentPanel = panel.id">
-                    <component :is="panel.icon" class="sidebar-icon" />
-                    <span class="sidebar-label">{{ panel.label }}</span>
-                </div>
+            <!-- Left Sidebar - Robot Status -->
+            <div class="left-sidebar">
+                <RobotStatusPanel />
             </div>
 
-            <!-- Center Panel Area -->
-            <div class="panel-area">
-                <component :is="currentPanelComponent" />
+            <!-- Center Area -->
+            <div class="center-area">
+                <!-- 3D Panel (Full) -->
+                <div class="center-panel threed-panel" @click="selectPanel('3d')">
+                    <div class="panel-header">
+                        <h3>任务规划</h3>
+                    </div>
+                    <div class="panel-content">
+                        <ThreeDPanel ref="threeDPanelRef" />
+                    </div>
+                </div>
+
+                <!-- Image Panel (Bottom Left Corner) -->
+                <div ref="floatingPanelRef" class="floating-image-panel" :style="floatingPanelStyle"
+                    @click="selectPanel('image')">
+                    <div class="panel-header" @mousedown="startDrag" @touchstart="startDrag">
+                        <h3>摄像头图像</h3>
+                    </div>
+                    <div class="panel-content">
+                        <ImagePanel />
+                    </div>
+                </div>
             </div>
 
             <!-- Right Sidebar -->
-            <div class="sidebar sidebar-right">
-                <div class="sidebar-header">
-                    <h3>{{ currentPanelSettings.title }}</h3>
-                    <el-button v-if="currentPanelSettings.showMinimize" text
-                        @click="rightSidebarCollapsed = !rightSidebarCollapsed">
-                        <el-icon>
-                            <component :is="rightSidebarCollapsed ? 'ArrowLeft' : 'ArrowRight'" />
-                        </el-icon>
-                    </el-button>
+            <div class="right-sidebar">
+                <!-- Settings Panel (Top) -->
+                <div class="right-panel settings-panel">
+                    <div class="panel-header">
+                        <h3>{{ currentSettingsTitle }}</h3>
+                    </div>
+                    <div class="panel-content">
+                        <ImageSettings v-if="selectedPanel === 'image'" />
+                        <ThreeDSettings v-else-if="selectedPanel === '3d'" />
+                        <div v-else class="empty-settings">
+                            <p>点击左侧面板查看设置</p>
+                        </div>
+                    </div>
                 </div>
 
-                <div v-if="!rightSidebarCollapsed" class="sidebar-content">
-                    <component :is="currentPanelSettings.component" />
+                <!-- AI Panel (Bottom) -->
+                <div class="right-panel ai-panel" @click="openAIDialog">
+                    <div class="panel-header">
+                        <h3>AI功能</h3>
+                    </div>
+                    <div class="panel-content ai-trigger">
+                        <el-icon :size="48" color="#409EFF">
+                            <DataAnalysis />
+                        </el-icon>
+                        <p>点击打开AI助手</p>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Connection Dialog -->
-        <ConnectionDialog v-model="showConnectionDialog" @connected="onConnected" />
+        <!-- AI Dialog -->
+        <el-dialog v-model="aiDialogVisible" title="AI助手" width="600px">
+            <div class="ai-dialog-content">
+                <div class="ai-feature-list">
+                    <div class="ai-feature-item">
+                        <el-icon :size="32" color="#409EFF">
+                            <View />
+                        </el-icon>
+                        <h4>图像识别</h4>
+                        <p>识别场景中的物体和障碍物</p>
+                    </div>
+                    <div class="ai-feature-item">
+                        <el-icon :size="32" color="#67C23A">
+                            <Position />
+                        </el-icon>
+                        <h4>路径规划</h4>
+                        <p>智能生成最优行走路径</p>
+                    </div>
+                    <div class="ai-feature-item">
+                        <el-icon :size="32" color="#E6A23C">
+                            <Connection />
+                        </el-icon>
+                        <h4>语音交互</h4>
+                        <p>通过语音控制机器狗</p>
+                    </div>
+                    <div class="ai-feature-item">
+                        <el-icon :size="32" color="#F56C6C">
+                            <TrendCharts />
+                        </el-icon>
+                        <h4>数据分析</h4>
+                        <p>分析运行数据和性能指标</p>
+                    </div>
+                </div>
+            </div>
+            <template #footer>
+                <el-button @click="aiDialogVisible = false">关闭</el-button>
+            </template>
+        </el-dialog>
     </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, markRaw, h } from 'vue'
-import { ElButton, ElIcon, ElMessage } from 'element-plus'
-import { useRosStore } from '@/stores/ros'
-import { rosConnection } from '@/services/rosConnection'
-import ConnectionDialog from '@/components/ConnectionDialog.vue'
+import { ref, computed, provide, onUnmounted } from 'vue'
+import { ElDialog, ElButton, ElIcon } from 'element-plus'
+import { DataAnalysis, View, Position, Connection, TrendCharts } from '@element-plus/icons-vue'
 import ThreeDPanel from '@/components/panels/ThreeDPanel.vue'
 import ImagePanel from '@/components/panels/ImagePanel.vue'
+import RobotStatusPanel from '@/components/panels/RobotStatusPanel.vue'
 import ThreeDSettings from '@/components/settings/ThreeDSettings.vue'
 import ImageSettings from '@/components/settings/ImageSettings.vue'
 
-// Icons - using functional components to avoid runtime compilation
-const ThreeDIcon = markRaw({
-    setup() {
-        return () => h('div', { style: 'font-size: 20px;' }, '🎮')
+// 3D面板引用
+const threeDPanelRef = ref()
+
+// 通过provide传递给设置面板
+provide('threeDPanelRef', threeDPanelRef)
+
+// 当前选中的面板
+const selectedPanel = ref<'image' | '3d' | null>('image')
+
+// AI对话框状态
+const aiDialogVisible = ref(false)
+
+// 浮动面板引用和位置
+const floatingPanelRef = ref<HTMLElement>()
+const floatingPanelPosition = ref({ x: 16, y: 16 })
+const isDragging = ref(false)
+const dragStart = ref({ x: 0, y: 0 })
+
+// 浮动面板样式
+const floatingPanelStyle = computed(() => ({
+    left: `${floatingPanelPosition.value.x}px`,
+    bottom: `${floatingPanelPosition.value.y}px`
+}))
+
+// 开始拖动
+const startDrag = (e: MouseEvent | TouchEvent) => {
+    e.stopPropagation() // 阻止触发面板选择
+    isDragging.value = true
+
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY
+
+    if (floatingPanelRef.value) {
+        const rect = floatingPanelRef.value.getBoundingClientRect()
+        dragStart.value = {
+            x: clientX - rect.left,
+            y: window.innerHeight - clientY - (window.innerHeight - rect.bottom)
+        }
     }
-})
-const ImageIcon = markRaw({
-    setup() {
-        return () => h('div', { style: 'font-size: 20px;' }, '📷')
-    }
-})
 
-const rosStore = useRosStore()
-const isConnected = computed(() => rosStore.isConnected)
-
-const showConnectionDialog = ref(false)
-const currentPanel = ref('3d')
-const rightSidebarCollapsed = ref(false)
-
-interface Panel {
-    id: string
-    label: string
-    icon: any
-    component: any
-    settingsComponent: any
-    settingsTitle: string
+    document.addEventListener('mousemove', onDrag)
+    document.addEventListener('mouseup', stopDrag)
+    document.addEventListener('touchmove', onDrag)
+    document.addEventListener('touchend', stopDrag)
 }
 
-const panels: Panel[] = [
-    {
-        id: '3d',
-        label: '3D',
-        icon: ThreeDIcon,
-        component: markRaw(ThreeDPanel),
-        settingsComponent: markRaw(ThreeDSettings),
-        settingsTitle: '3D 设置'
-    },
-    {
-        id: 'image',
-        label: '图像',
-        icon: ImageIcon,
-        component: markRaw(ImagePanel),
-        settingsComponent: markRaw(ImageSettings),
-        settingsTitle: '图像设置'
+// 拖动中
+const onDrag = (e: MouseEvent | TouchEvent) => {
+    if (!isDragging.value || !floatingPanelRef.value) return
+
+    e.preventDefault()
+
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY
+
+    const containerRect = floatingPanelRef.value.parentElement?.getBoundingClientRect()
+    const panelRect = floatingPanelRef.value.getBoundingClientRect()
+
+    if (containerRect) {
+        // 计算新位置
+        let newX = clientX - containerRect.left - dragStart.value.x
+        let newY = containerRect.bottom - clientY - dragStart.value.y
+
+        // 边界检查
+        newX = Math.max(0, Math.min(newX, containerRect.width - panelRect.width))
+        newY = Math.max(0, Math.min(newY, containerRect.height - panelRect.height))
+
+        floatingPanelPosition.value = { x: newX, y: newY }
     }
-]
-
-const currentPanelComponent = computed(() => {
-    const panel = panels.find(p => p.id === currentPanel.value)
-    return panel?.component
-})
-
-const currentPanelSettings = computed(() => {
-    const panel = panels.find(p => p.id === currentPanel.value)
-    return {
-        title: panel?.settingsTitle || '',
-        component: panel?.settingsComponent,
-        showMinimize: true
-    }
-})
-
-const handleDisconnect = () => {
-    rosConnection.disconnect()
-    rosStore.setConnectionState({ connected: false, connecting: false })
-    ElMessage.info('已断开连接')
 }
 
-const onConnected = () => {
-    ElMessage.success('连接成功')
+// 停止拖动
+const stopDrag = () => {
+    isDragging.value = false
+    document.removeEventListener('mousemove', onDrag)
+    document.removeEventListener('mouseup', stopDrag)
+    document.removeEventListener('touchmove', onDrag)
+    document.removeEventListener('touchend', stopDrag)
 }
+
+// 选择面板
+const selectPanel = (panel: 'image' | '3d') => {
+    if (!isDragging.value) {
+        selectedPanel.value = panel
+    }
+}
+
+// 当前设置面板标题
+const currentSettingsTitle = computed(() => {
+    if (selectedPanel.value === 'image') return '图像设置'
+    if (selectedPanel.value === '3d') return '任务规划设置'
+    return '设置'
+})
+
+// 打开AI对话框
+const openAIDialog = () => {
+    aiDialogVisible.value = true
+}
+
+// 清理事件监听
+onUnmounted(() => {
+    stopDrag()
+})
 </script>
 
 <style scoped>
@@ -152,7 +238,6 @@ const onConnected = () => {
     border-bottom: 1px solid #e0e0e0;
     display: flex;
     align-items: center;
-    justify-content: space-between;
     padding: 0 16px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
@@ -163,111 +248,221 @@ const onConnected = () => {
     color: #333;
 }
 
-.app-bar-actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.connection-status {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 12px;
-    background-color: #f0f9ff;
-    border-radius: 4px;
-    font-size: 13px;
-}
-
-.status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-}
-
-.status-dot.connected {
-    background-color: #52c41a;
-}
-
 .workspace-content {
     flex: 1;
-    display: flex;
+    display: grid;
+    grid-template-columns: 250px 1fr 280px;
+    gap: 12px;
+    padding: 12px;
+    background-color: #f5f5f5;
     overflow: hidden;
 }
 
-.sidebar {
+/* Left Sidebar - Robot Status */
+.left-sidebar {
     background-color: #ffffff;
-    border-right: 1px solid #e0e0e0;
-    display: flex;
-    flex-direction: column;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    overflow: auto;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
-.sidebar-left {
-    width: 64px;
-    padding: 8px 0;
+/* Center Area */
+.center-area {
+    position: relative;
+    min-height: 0;
+    overflow: hidden;
 }
 
-.sidebar-item {
+.center-panel {
+    background-color: #ffffff;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 12px 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     cursor: pointer;
-    transition: background-color 0.2s;
-    color: #666;
+    transition: all 0.2s ease;
 }
 
-.sidebar-item:hover {
-    background-color: #f5f5f5;
+.center-panel:hover {
+    border-color: #409EFF;
+    box-shadow: 0 4px 12px rgba(64, 158, 255, 0.2);
 }
 
-.sidebar-item.active {
-    background-color: #e6f7ff;
-    color: #1890ff;
-    border-right: 3px solid #1890ff;
+.center-panel.threed-panel {
+    width: 100%;
+    height: 100%;
 }
 
-.sidebar-icon {
-    margin-bottom: 4px;
+/* Floating Image Panel */
+.floating-image-panel {
+    position: absolute;
+    width: 320px;
+    height: 240px;
+    background-color: #ffffff;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    cursor: pointer;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    z-index: 10;
+    user-select: none;
 }
 
-.sidebar-label {
-    font-size: 11px;
-    text-align: center;
+.floating-image-panel:hover {
+    border-color: #409EFF;
+    box-shadow: 0 6px 20px rgba(64, 158, 255, 0.3);
 }
 
-.panel-area {
-    flex: 1;
+.floating-image-panel .panel-header {
+    padding: 8px 12px;
     background-color: #fafafa;
+    border-bottom: 1px solid #e0e0e0;
+    cursor: move;
+    user-select: none;
+}
+
+.floating-image-panel .panel-header:active {
+    cursor: grabbing;
+}
+
+.floating-image-panel .panel-header h3 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #333;
+}
+
+.floating-image-panel .panel-content {
+    flex: 1;
     overflow: hidden;
     position: relative;
 }
 
-.sidebar-right {
-    width: 320px;
-    border-left: 1px solid #e0e0e0;
-    border-right: none;
-}
-
-.sidebar-header {
-    padding: 12px 16px;
-    border-bottom: 1px solid #e0e0e0;
+/* Right Sidebar */
+.right-sidebar {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    gap: 12px;
 }
 
-.sidebar-header h3 {
+.right-panel {
+    background-color: #ffffff;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.right-panel.settings-panel {
+    flex: 2;
+    min-height: 0;
+}
+
+.right-panel.ai-panel {
+    flex: 1;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.right-panel.ai-panel:hover {
+    border-color: #409EFF;
+    box-shadow: 0 4px 12px rgba(64, 158, 255, 0.2);
+    transform: translateY(-2px);
+}
+
+.panel-header {
+    padding: 12px 16px;
+    background-color: #fafafa;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.panel-header h3 {
     margin: 0;
     font-size: 14px;
     font-weight: 600;
     color: #333;
 }
 
-.sidebar-content {
+.panel-content {
     flex: 1;
-    overflow-y: auto;
-    padding: 16px;
+    overflow: auto;
+    position: relative;
+}
+
+.empty-settings {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #999;
+    font-size: 13px;
+}
+
+.ai-trigger {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: #409EFF;
+}
+
+.ai-trigger p {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+/* AI Dialog */
+.ai-dialog-content {
+    padding: 20px 0;
+}
+
+.ai-feature-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+.ai-feature-item {
+    padding: 20px;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    text-align: center;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.ai-feature-item:hover {
+    border-color: #409EFF;
+    box-shadow: 0 4px 12px rgba(64, 158, 255, 0.2);
+    transform: translateY(-2px);
+}
+
+.ai-feature-item h4 {
+    margin: 12px 0 8px 0;
+    font-size: 16px;
+    color: #333;
+}
+
+.ai-feature-item p {
+    margin: 0;
+    font-size: 13px;
+    color: #666;
+}
+
+/* 响应式调整 */
+@media (max-width: 1200px) {
+    .workspace-content {
+        grid-template-columns: 220px 1fr 250px;
+    }
 }
 </style>

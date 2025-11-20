@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "web",
+			"path": "."
+		},
+		{
+			"name": "lichtblick-clean",
+			"path": "../lichtblick-clean"
+		}
+	],
+	"settings": {}
+}

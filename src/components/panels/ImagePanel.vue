@@ -1,7 +1,7 @@
 <template>
     <div class="image-panel">
         <div v-if="!selectedTopic" class="no-topic">
-            <p>请在右侧设置中选择图像话题</p>
+            <p>请在右侧设置中选择摄像头</p>
         </div>
         <div v-else class="image-container">
             <canvas ref="imageCanvas" class="image-canvas"></canvas>
@@ -176,8 +176,6 @@ const handleImageMessage = (message: RosMessage) => {
             }
 
             img.src = imageData
-        } else {
-            console.warn('No valid image data found in message')
         }
     } catch (error) {
         console.error('Error processing image message:', error)
@@ -262,8 +260,10 @@ onUnmounted(() => {
 }
 
 .image-canvas {
-    width: 100%;
-    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
     object-fit: contain;
 }
 

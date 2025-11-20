@@ -34,7 +34,6 @@ class RosConnection {
       })
 
       this.ros.on('connection', () => {
-        console.log('Connected to ROS bridge server')
         this.notifyConnectionChange(true)
         resolve()
       })
@@ -46,7 +45,6 @@ class RosConnection {
       })
 
       this.ros.on('close', () => {
-        console.log('Connection to ROS bridge server closed')
         this.notifyConnectionChange(false)
       })
     })

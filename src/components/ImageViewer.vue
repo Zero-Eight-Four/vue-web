@@ -2,7 +2,7 @@
     <div class="image-viewer">
         <div class="viewer-header">
             <h3>图像显示</h3>
-            <el-select v-model="selectedImageTopic" placeholder="选择图像话题" size="small" style="width: 200px"
+            <el-select v-model="selectedImageTopic" placeholder="选择摄像头" size="small" style="width: 200px"
                 @change="handleTopicChange">
                 <el-option v-for="topic in imageTopics" :key="topic.name" :label="topic.name" :value="topic.name" />
             </el-select>
@@ -10,7 +10,7 @@
         <div class="image-container">
             <canvas ref="imageCanvas" class="image-canvas"></canvas>
             <div v-if="!currentImage" class="no-image">
-                <span>{{ selectedImageTopic ? '等待图像数据...' : '请选择图像话题' }}</span>
+                <span>{{ selectedImageTopic ? '等待图像数据...' : '请选择摄像头' }}</span>
             </div>
         </div>
     </div>

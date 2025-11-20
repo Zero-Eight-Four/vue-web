@@ -1,6 +1,6 @@
 <template>
     <div class="topic-selector">
-        <el-select v-model="selectedTopic" placeholder="选择话题" size="small" filterable clearable style="width: 250px"
+        <el-select v-model="selectedTopic" placeholder="选择摄像头" size="small" filterable clearable style="width: 250px"
             @change="handleTopicChange">
             <el-option v-for="topic in topics" :key="topic.name" :label="topic.name" :value="topic.name">
                 <span>{{ topic.name }}</span>
@@ -22,8 +22,7 @@ const selectedTopic = ref<string>('')
 
 const topics = computed(() => rosStore.topics)
 
-const handleTopicChange = (value: string) => {
-    console.log('Selected topic:', value)
+const handleTopicChange = (_value: string) => {
     // 可以根据话题类型进行不同的处理
 }
 </script>
