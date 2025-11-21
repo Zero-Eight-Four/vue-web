@@ -1,5 +1,5 @@
 <template>
-    <div class="image-panel">
+    <div ref="imagePanelRef" class="image-panel">
         <div v-if="!selectedTopic" class="no-topic">
             <p>请在右侧设置中选择摄像头</p>
         </div>
@@ -11,22 +11,49 @@
                 </el-icon>
                 <span>等待图像数据...</span>
             </div>
+            <!-- 放大/缩小按钮 -->
+            <div class="fullscreen-btn">
+                <el-button size="small" @click="toggleFullscreen" :title="isExpanded ? '恢复大小' : '放大显示'">
+                    <el-icon>
+                        <FullScreen v-if="!isExpanded" />
+                        <Close v-else />
+                    </el-icon>
+                </el-button>
+            </div>
         </div>
     </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onUnmounted } from 'vue'
-import { ElIcon } from 'element-plus'
-import { Loading } from '@element-plus/icons-vue'
+import { ref, watch, onUnmounted, onMounted } from 'vue'
+import { ElIcon, ElButton } from 'element-plus'
+import { Loading, FullScreen, Close } from '@element-plus/icons-vue'
 import { useImageSettingsStore } from '@/stores/imageSettings'
+import { useRosStore } from '@/stores/ros'
 import { rosConnection } from '@/services/rosConnection'
 import type { RosMessage } from '@/types/ros'
 
+// 定义 props
+const props = defineProps<{
+    isExpanded?: boolean
+}>()
+
 const settingsStore = useImageSettingsStore()
+const rosStore = useRosStore()
+const imagePanelRef = ref<HTMLDivElement>()
 const imageCanvas = ref<HTMLCanvasElement>()
 const hasImage = ref(false)
 const selectedTopic = ref('')
+
+// 默认摄像头话题列表（按优先级）
+const defaultCameraTopics = [
+    '/camera/image_raw/compressed',
+    '/camera/image_raw',
+    '/usb_cam/image_raw/compressed',
+    '/usb_cam/image_raw',
+    '/head_camera/rgb/image_raw/compressed',
+    '/head_camera/rgb/image_raw'
+]
 
 const handleImageMessage = (message: RosMessage) => {
     if (!imageCanvas.value) return
@@ -182,6 +209,81 @@ const handleImageMessage = (message: RosMessage) => {
     }
 }
 
+// 自动选择并订阅默认摄像头话题
+const autoSubscribeDefaultCamera = async () => {
+    console.log('[摄像头自动订阅] 开始执行...')
+    console.log('[摄像头自动订阅] ROS连接状态:', rosConnection.isConnected())
+
+    if (!rosConnection.isConnected()) {
+        console.log('[摄像头自动订阅] ROS未连接,无法自动订阅摄像头')
+        return
+    }
+
+    try {
+        // 获取所有可用话题
+        console.log('[摄像头自动订阅] 正在获取话题列表...')
+        const topics = await rosConnection.getTopics()
+        console.log('[摄像头自动订阅] 获取到话题数量:', topics.length)
+        console.log('[摄像头自动订阅] 所有话题:', topics.map(t => `${t.name} (${t.messageType})`))
+
+        // 查找第一个可用的默认摄像头话题
+        let selectedDefault = ''
+        for (const defaultTopic of defaultCameraTopics) {
+            const found = topics.find(t => t.name === defaultTopic)
+            if (found) {
+                selectedDefault = defaultTopic
+                console.log('[摄像头自动订阅] ✅ 找到默认摄像头话题:', defaultTopic, '类型:', found.messageType)
+                break
+            }
+        }
+
+        // 如果没有找到默认话题,查找任何图像话题
+        if (!selectedDefault) {
+            console.log('[摄像头自动订阅] 未找到默认话题,搜索任意图像话题...')
+            const imageTopic = topics.find(t =>
+                t.messageType.includes('Image') ||
+                t.messageType.includes('CompressedImage')
+            )
+            if (imageTopic) {
+                selectedDefault = imageTopic.name
+                console.log('[摄像头自动订阅] ✅ 使用第一个可用图像话题:', selectedDefault, '类型:', imageTopic.messageType)
+            }
+        }
+
+        if (selectedDefault) {
+            // 更新 store 中的选中话题
+            console.log('[摄像头自动订阅] 设置选中话题到 store:', selectedDefault)
+            settingsStore.setSelectedTopic(selectedDefault)
+            console.log('[摄像头自动订阅] ✅ 自动选择摄像头话题成功:', selectedDefault)
+        } else {
+            console.warn('[摄像头自动订阅] ⚠️ 未找到可用的摄像头话题')
+            console.warn('[摄像头自动订阅] 可用话题类型:', topics.map(t => t.messageType))
+        }
+    } catch (err) {
+        console.error('[摄像头自动订阅] ❌ 自动订阅摄像头失败:', err)
+    }
+}
+
+// 监听 ROS 连接状态变化
+watch(() => rosStore.isConnected, async (connected) => {
+    if (connected) {
+        console.log('ROS已连接,准备自动订阅摄像头')
+        // 延迟等待话题列表更新 - 增加延迟时间确保话题列表已加载
+        setTimeout(async () => {
+            console.log('开始自动订阅摄像头流程...')
+            await autoSubscribeDefaultCamera()
+        }, 2000)
+    } else {
+        console.log('ROS已断开连接')
+        // 清理订阅
+        if (selectedTopic.value) {
+            rosConnection.unsubscribe(selectedTopic.value)
+            selectedTopic.value = ''
+            hasImage.value = false
+        }
+    }
+}, { immediate: true })
+
 // 监听话题变化
 watch(() => settingsStore.selectedTopic, async (newTopic, oldTopic) => {
     // 取消旧订阅
@@ -216,11 +318,29 @@ watch(() => settingsStore.selectedTopic, async (newTopic, oldTopic) => {
                 messageType: messageType,
                 callback: handleImageMessage
             })
+            console.log('成功订阅摄像头话题:', newTopic)
         } catch (err) {
             console.error('Failed to subscribe to image topic:', err)
         }
     }
 }, { immediate: true })
+
+// 定义 emits
+const emit = defineEmits<{
+    toggleExpand: []
+}>()
+
+// 切换放大/缩小
+const toggleFullscreen = () => {
+    emit('toggleExpand')
+}
+
+onMounted(() => {
+    // 如果已经连接,立即尝试自动订阅
+    if (rosStore.isConnected) {
+        autoSubscribeDefaultCamera()
+    }
+})
 
 onUnmounted(() => {
     if (selectedTopic.value) {
@@ -278,5 +398,23 @@ onUnmounted(() => {
 
 .loading .el-icon {
     font-size: 32px;
+}
+
+.fullscreen-btn {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 100;
+}
+
+.fullscreen-btn .el-button {
+    background-color: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.fullscreen-btn .el-button:hover {
+    background-color: #ecf5ff;
+    border-color: #409eff;
+    color: #409eff;
 }
 </style>

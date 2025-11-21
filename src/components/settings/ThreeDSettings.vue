@@ -8,7 +8,7 @@
                         <el-icon>
                             <Location />
                         </el-icon>
-                        <span>位姿发布</span>
+                        <span>任务发布</span>
                     </div>
                     <div class="button-grid">
                         <el-button :type="publishType === 'pose_estimate' ? 'primary' : 'default'" size="small"
@@ -16,14 +16,14 @@
                             <el-icon>
                                 <Position />
                             </el-icon>
-                            当前位姿
+                            初始化位置
                         </el-button>
                         <el-button :type="publishType === 'pose' ? 'primary' : 'default'" size="small"
                             @click="handlePublishCommand('pose')">
                             <el-icon>
                                 <Aim />
                             </el-icon>
-                            目标位姿
+                            添加目标点
                         </el-button>
                     </div>
                 </div>
@@ -34,7 +34,7 @@
                         <el-icon>
                             <Operation />
                         </el-icon>
-                        <span>队列控制</span>
+                        <span>任务控制</span>
                     </div>
                     <div class="button-grid">
                         <el-button type="primary" size="small" @click="publishCommand('/goal_queue/start')">
@@ -70,7 +70,7 @@
                         <el-icon>
                             <Files />
                         </el-icon>
-                        <span>快速操作</span>
+                        <span>任务管理</span>
                     </div>
                     <div class="button-grid compact">
                         <el-button size="small" @click="publishCommand('/goal_queue/save')">
@@ -106,9 +106,9 @@
                         <el-icon>
                             <FolderOpened />
                         </el-icon>
-                        <span>命名队列</span>
+                        <span>任务命名 </span>
                     </div>
-                    <el-select v-model="queueName" placeholder="输入或选择队列名称" size="small" filterable allow-create
+                    <el-select v-model="queueName" placeholder="输入或选择任务名称" size="small" filterable allow-create
                         clearable class="queue-select">
                         <el-option v-for="name in availableQueues" :key="name" :label="name" :value="name" />
                     </el-select>

@@ -14,8 +14,9 @@
 
             <!-- Center Area -->
             <div class="center-area">
-                <!-- 3D Panel (Full) -->
-                <div class="center-panel threed-panel" @click="selectPanel('3d')">
+                <!-- 3D Panel (Full or Minimized) -->
+                <div class="center-panel threed-panel" :class="{ 'swap-to-corner': isImagePanelExpanded }"
+                    :style="threeDPanelStyle" @click="selectPanel('3d')">
                     <div class="panel-header">
                         <h3>任务规划</h3>
                     </div>
@@ -24,14 +25,15 @@
                     </div>
                 </div>
 
-                <!-- Image Panel (Bottom Left Corner) -->
-                <div ref="floatingPanelRef" class="floating-image-panel" :style="floatingPanelStyle"
+                <!-- Image Panel (Bottom Left Corner or Expanded) -->
+                <div ref="floatingPanelRef" class="floating-image-panel"
+                    :class="{ 'swap-to-full': isImagePanelExpanded }" :style="floatingPanelStyle"
                     @click="selectPanel('image')">
                     <div class="panel-header" @mousedown="startDrag" @touchstart="startDrag">
                         <h3>摄像头图像</h3>
                     </div>
                     <div class="panel-content">
-                        <ImagePanel />
+                        <ImagePanel :isExpanded="isImagePanelExpanded" @toggleExpand="toggleImagePanelExpand" />
                     </div>
                 </div>
             </div>
@@ -136,11 +138,35 @@ const floatingPanelPosition = ref({ x: 16, y: 16 })
 const isDragging = ref(false)
 const dragStart = ref({ x: 0, y: 0 })
 
+// 摄像头面板放大状态
+const isImagePanelExpanded = ref(false)
+
 // 浮动面板样式
-const floatingPanelStyle = computed(() => ({
-    left: `${floatingPanelPosition.value.x}px`,
-    bottom: `${floatingPanelPosition.value.y}px`
-}))
+const floatingPanelStyle = computed(() => {
+    if (isImagePanelExpanded.value) {
+        return {}
+    }
+    return {
+        left: `${floatingPanelPosition.value.x}px`,
+        bottom: `${floatingPanelPosition.value.y}px`
+    }
+})
+
+// 任务规划面板样式（缩小时）
+const threeDPanelStyle = computed(() => {
+    if (isImagePanelExpanded.value) {
+        return {
+            left: `${floatingPanelPosition.value.x}px`,
+            bottom: `${floatingPanelPosition.value.y}px`
+        }
+    }
+    return {}
+})
+
+// 切换摄像头面板放大/缩小
+const toggleImagePanelExpand = () => {
+    isImagePanelExpanded.value = !isImagePanelExpanded.value
+}
 
 // 开始拖动
 const startDrag = (e: MouseEvent | TouchEvent) => {
@@ -294,6 +320,20 @@ onUnmounted(() => {
 .center-panel.threed-panel {
     width: 100%;
     height: 100%;
+    transition: all 0.3s ease;
+}
+
+.center-panel.threed-panel .panel-content {
+    overflow: hidden;
+}
+
+/* 任务规划面板互换到角落 */
+.center-panel.threed-panel.swap-to-corner {
+    position: absolute;
+    width: 320px;
+    height: 240px;
+    z-index: 15;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
 }
 
 /* Floating Image Panel */
@@ -309,7 +349,7 @@ onUnmounted(() => {
     overflow: hidden;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
     cursor: pointer;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    transition: all 0.3s ease;
     z-index: 10;
     user-select: none;
 }
@@ -317,6 +357,20 @@ onUnmounted(() => {
 .floating-image-panel:hover {
     border-color: #409EFF;
     box-shadow: 0 6px 20px rgba(64, 158, 255, 0.3);
+}
+
+/* 摄像头面板互换到全屏 */
+.floating-image-panel.swap-to-full {
+    position: absolute;
+    left: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    right: 0 !important;
+    width: 100%;
+    height: 100%;
+    z-index: 5;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
 .floating-image-panel .panel-header {
@@ -395,6 +449,16 @@ onUnmounted(() => {
     flex: 1;
     overflow: auto;
     position: relative;
+}
+
+/* 隐藏所有滚动条 */
+.panel-content::-webkit-scrollbar {
+    display: none;
+}
+
+.panel-content {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
 }
 
 .empty-settings {

@@ -42,6 +42,8 @@ let mouse: THREE.Vector2 | null = null
 let mapSubscriptionTimer: number | null = null
 let hasReceivedMapData = false
 let currentMapData: any = null
+let resizeObserver: ResizeObserver | null = null
+let resizeTimeout: number | null = null
 
 const initThreeJS = () => {
     if (!canvasContainer.value) return
@@ -158,6 +160,24 @@ const initThreeJS = () => {
         renderer.setSize(width, height)
     }
     window.addEventListener('resize', handleResize)
+
+    // 使用 ResizeObserver 监听容器大小变化（带防抖）
+    resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+            if (entry.target === canvasContainer.value) {
+                // 清除之前的定时器
+                if (resizeTimeout) {
+                    clearTimeout(resizeTimeout)
+                }
+                // 延迟执行，避免在动画过程中频繁触发
+                resizeTimeout = window.setTimeout(() => {
+                    handleResize()
+                    resizeTimeout = null
+                }, 100)
+            }
+        }
+    })
+    resizeObserver.observe(canvasContainer.value)
 
     // 动画循环
     const animate = () => {
@@ -823,6 +843,18 @@ onUnmounted(() => {
         renderer.domElement.removeEventListener('click', handleMouseClick)
     }
 
+    // 清理 ResizeObserver
+    if (resizeObserver) {
+        resizeObserver.disconnect()
+        resizeObserver = null
+    }
+
+    // 清理防抖定时器
+    if (resizeTimeout) {
+        clearTimeout(resizeTimeout)
+        resizeTimeout = null
+    }
+
     // 取消订阅
     rosConnection.unsubscribe('/map')
     rosConnection.unsubscribe('/move_base/global_costmap/footprint')
@@ -885,6 +917,7 @@ onUnmounted(() => {
 .canvas-container {
     width: 100%;
     height: 100%;
+    overflow: hidden;
 }
 
 .map-controls {

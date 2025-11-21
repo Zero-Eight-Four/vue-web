@@ -48,12 +48,8 @@
                                 <span class="value">{{ (statusData.main_board_temp || 0).toFixed(0) }}°C</span>
                             </div>
                             <div class="info-item">
-                                <span class="label">充电温度:</span>
+                                <span class="label">电池温度:</span>
                                 <span class="value">{{ (statusData.charging_temp || 0).toFixed(0) }}°C</span>
-                            </div>
-                            <div class="info-item">
-                                <span class="label">电机电流:</span>
-                                <span class="value">{{ (statusData.motor_current || 0).toFixed(1) }}A</span>
                             </div>
                         </div>
                     </div>
